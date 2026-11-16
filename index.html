@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OutilsPro — Outillage & jardinage</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { theme: { extend: { fontFamily: { sans: ['Barlow', 'system-ui', 'sans-serif'] } } } };
+  </script>
+</head>
+<body class="bg-stone-100 text-stone-900 min-h-screen flex flex-col font-sans">
+
+  <header class="bg-stone-900 text-white sticky top-0 z-20">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+      <a href="#/" class="text-2xl font-extrabold tracking-tight">Outils<span class="text-yellow-400">Pro</span></a>
+      <nav class="flex items-center gap-5 text-sm font-semibold">
+        <a href="#/catalogue" class="hover:text-yellow-400">Catalogue</a>
+        <a href="#/panier" class="hover:text-yellow-400">Panier
+          <span id="cart-count" class="bg-yellow-400 text-stone-900 rounded px-2 py-0.5 text-xs ml-1">0</span>
+        </a>
+        <span id="auth-links" class="flex items-center gap-4"></span>
+      </nav>
+    </div>
+    <!-- Bande de signalisation : seul élément décoratif, il rappelle le monde de l'outillage -->
+    <div class="h-2" style="background: repeating-linear-gradient(-45deg, #FFC20E 0 14px, #17191C 14px 28px)"></div>
+  </header>
+
+  <main id="app" class="max-w-6xl mx-auto px-4 py-8 flex-1 w-full"></main>
+
+  <footer class="bg-stone-900 text-stone-400 text-center text-sm py-5">© OutilsPro — démonstration e-commerce</footer>
+
+  <script>
+    // ---------- Helpers ----------
+    const $ = s => document.querySelector(s);
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+    const eur = n => Number(n).toFixed(2).replace('.', ',') + ' €';
+    const stars = r => '★'.repeat(Math.round(r)) + '☆'.repeat(5 - Math.round(r));
+    const go = hash => (location.hash = hash);
+    const CATS = { 'outils-electriques': 'Outils électriques', 'outils-manuels': 'Outils manuels', jardinage: 'Jardinage', accessoires: 'Accessoires' };
+    const champ = 'w-full bg-white border border-stone-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-yellow-400';
+    const btn = 'bg-yellow-400 hover:bg-yellow-300 text-stone-900 font-bold rounded px-5 py-2.5 transition';
+
+    let user = JSON.parse(localStorage.getItem('user') || 'null');
+    const cart = () => JSON.parse(localStorage.getItem('panier') || '[]');
+    const saveCart = c => { localStorage.setItem('panier', JSON.stringify(c)); updateHeader(); };
+
+    // Appel à l'API avec le jeton de session
+    async function api(url, opts = {}) {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api' + url, {
+        ...opts,
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+        body: opts.body && JSON.stringify(opts.body)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erreur serveur');
+      return data;
+    }
+
+    function updateHeader() {
+      $('#cart-count').textContent = cart().reduce((s, i) => s + i.qty, 0);
+      $('#auth-links').innerHTML = user
+        ? `${user.role === 'admin' ? '<a href="#/admin" class="text-yellow-400">Administration</a>' : ''}
+           <button onclick="logout()" class="hover:text-yellow-400">Déconnexion</button>`
+        : '<a href="#/connexion" class="hover:text-yellow-400">Connexion</a>';
+    }
+    function logout() {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      user = null;
+      updateHeader();
+      go('#/');
+    }
+
+    // ---------- Composants ----------
+    const carte = p => `
+      <a href="#/produit/${p.id}" class="bg-white border border-stone-200 rounded flex flex-col hover:border-stone-900 transition">
+        <img src="${esc(p.image)}" alt="${esc(p.name)}" class="h-44 w-full object-cover rounded-t">
+        <div class="p-4 flex flex-col flex-1">
+          <span class="text-xs text-stone-500 uppercase">${CATS[p.category] || ''}</span>
+          <h3 class="font-semibold text-lg leading-snug mt-1">${esc(p.name)}</h3>
+          <p class="text-amber-500 text-sm">${stars(p.rating)} <span class="text-stone-400">(${p.reviews.length})</span></p>
+          <p class="mt-auto pt-3 text-xl font-extrabold">${eur(p.price)}</p>
+        </div>
+      </a>`;
+    const grille = list => list.length
+      ? `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">${list.map(carte).join('')}</div>`
+      : '<p class="text-stone-500">Aucun produit ne correspond à votre recherche.</p>';
+
+    // Ajoute au panier (le stock limite la quantité)
+    function ajouter(p, qty, button) {
+      const c = cart();
+      const item = c.find(i => i.id === p.id);
+      if (item) item.qty = Math.min(item.qty + qty, p.stock);
+      else c.push({ id: p.id, name: p.name, price: p.price, image: p.image, stock: p.stock, qty: Math.min(qty, p.stock) });
+      saveCart(c);
+      button.textContent = 'Ajouté ✓';
+      setTimeout(() => (button.textContent = 'Ajouter au panier'), 1500);
+    }
+
+    // Formulaire commun de connexion / inscription
+    function formAuth(inscription) {
+      $('#app').innerHTML = `
+        <form id="form-auth" class="max-w-md mx-auto bg-white border border-stone-200 rounded p-8 space-y-4">
+          <h1 class="text-3xl font-extrabold">${inscription ? 'Créer un compte' : 'Connexion'}</h1>
+          ${inscription ? `<input name="name" required placeholder="Nom complet" class="${champ}">` : ''}
+          <input name="email" type="email" required placeholder="Adresse e-mail" class="${champ}">
+          <input name="password" type="password" required minlength="6" placeholder="Mot de passe (6 caractères min.)" class="${champ}">
+          <button class="${btn} w-full">${inscription ? 'Créer mon compte' : 'Se connecter'}</button>
+          <p class="text-sm text-center text-stone-600">
+            <a href="#/${inscription ? 'connexion' : 'inscription'}" class="underline">${inscription ? 'Déjà inscrit ? Se connecter' : 'Pas de compte ? En créer un'}</a>
+          </p>
+        </form>`;
+      $('#form-auth').onsubmit = async e => {
+        e.preventDefault();
+        try {
+          const data = await api(`/auth/${inscription ? 'inscription' : 'connexion'}`, {
+            method: 'POST',
+            body: Object.fromEntries(new FormData(e.target))
+          });
+          localStorage.setItem('token', data.token);
+          localStorage.setItem('user', JSON.stringify(data.user));
+          user = data.user;
+          updateHeader();
+          go('#/');
+        } catch (err) { alert(err.message); }
+      };
+    }
+
+    // ---------- Pages ----------
+    const pages = {
+      async accueil() {
+        const vedettes = (await api('/products')).filter(p => p.featured).slice(0, 4);
+        $('#app').innerHTML = `
+          <section class="bg-stone-900 text-white rounded p-8 md:p-14 mb-12">
+            <h1 class="text-4xl md:text-5xl font-extrabold leading-tight max-w-2xl">Le bon outil pour chaque chantier</h1>
+            <p class="mt-4 text-stone-300 max-w-lg text-lg">Électroportatif, outillage à main et jardinage, avec des avis de clients qui travaillent vraiment.</p>
+            <a href="#/catalogue" class="${btn} inline-block mt-8">Voir le catalogue</a>
+          </section>
+          <h2 class="text-2xl font-extrabold mb-5">Produits en vedette</h2>
+          ${grille(vedettes)}`;
+      },
+
+      async catalogue() {
+        $('#app').innerHTML = `
+          <form id="filtres" class="grid md:grid-cols-4 gap-6">
+            <aside class="bg-white border border-stone-200 rounded p-5 space-y-3 h-fit md:sticky md:top-24">
+              <input name="q" placeholder="Rechercher un produit…" class="${champ}">
+              <select name="category" class="${champ}">
+                <option value="">Toutes les catégories</option>
+                ${Object.entries(CATS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}
+              </select>
+              <p class="text-sm font-semibold text-stone-600 pt-1">Prix (€)</p>
+              <div class="flex gap-2">
+                <input name="min" type="number" min="0" placeholder="Min" class="${champ}">
+                <input name="max" type="number" min="0" placeholder="Max" class="${champ}">
+              </div>
+              <select name="rating" class="${champ}">
+                <option value="">Toutes les notes</option>
+                <option value="4">4 étoiles et plus</option>
+                <option value="3">3 étoiles et plus</option>
+              </select>
+            </aside>
+            <section class="md:col-span-3">
+              <select name="sort" class="${champ} max-w-xs mb-5">
+                <option value="">Pertinence</option>
+                <option value="prix-asc">Prix croissant</option>
+                <option value="prix-desc">Prix décroissant</option>
+                <option value="note">Mieux notés</option>
+              </select>
+              <div id="resultats"></div>
+            </section>
+          </form>`;
+        const form = $('#filtres');
+        form.onsubmit = e => e.preventDefault(); // Entrée dans la recherche ne recharge pas la page
+        const refresh = async () => {
+          const params = new URLSearchParams([...new FormData(form)].filter(([, v]) => v));
+          $('#resultats').innerHTML = grille(await api('/products?' + params));
+        };
+        form.addEventListener('input', refresh);
+        await refresh();
+      },
+
+      async produit(id) {
+        const p = await api('/products/' + id);
+        $('#app').innerHTML = `
+          <div class="grid md:grid-cols-2 gap-8 bg-white border border-stone-200 rounded p-6 md:p-8">
+            <img src="${esc(p.image)}" alt="${esc(p.name)}" class="w-full rounded object-cover">
+            <div>
+              <span class="text-xs text-stone-500 uppercase">${CATS[p.category] || ''}</span>
+              <h1 class="text-3xl font-extrabold leading-tight mt-1">${esc(p.name)}</h1>
+              <p class="text-amber-500 mt-2">${stars(p.rating)} <span class="text-stone-500 text-sm">${p.rating}/5 · ${p.reviews.length} avis</span></p>
+              <p class="text-4xl font-extrabold mt-4">${eur(p.price)}</p>
+              <p class="text-sm mt-1 font-semibold ${p.stock > 0 ? 'text-green-700' : 'text-red-700'}">${p.stock > 0 ? `En stock (${p.stock})` : 'Rupture de stock'}</p>
+              <p class="mt-5 text-stone-700 leading-relaxed">${esc(p.description)}</p>
+              <div class="flex gap-3 mt-7">
+                <input id="qty" type="number" min="1" max="${p.stock}" value="1" ${p.stock ? '' : 'disabled'} class="w-24 bg-white border border-stone-300 rounded px-3 py-2">
+                <button id="add" ${p.stock ? '' : 'disabled'} class="${btn} flex-1 disabled:bg-stone-300 disabled:cursor-not-allowed">Ajouter au panier</button>
+              </div>
+            </div>
+          </div>
+          <section class="mt-10 max-w-2xl">
+            <h2 class="text-2xl font-extrabold mb-4">Avis clients</h2>
+            ${p.reviews.map(r => `
+              <div class="bg-white border border-stone-200 rounded p-4 mb-3">
+                <p class="text-amber-500 text-sm">${stars(r.rating)} <span class="text-stone-800 font-semibold ml-1">${esc(r.user)}</span></p>
+                <p class="text-stone-700 mt-1">${esc(r.comment)}</p>
+              </div>`).join('') || '<p class="text-stone-500">Aucun avis pour le moment.</p>'}
+            ${user ? `
+              <form id="form-avis" class="bg-white border border-stone-200 rounded p-4 mt-4 space-y-3">
+                <select name="rating" class="${champ}">
+                  <option value="5">5 étoiles</option><option value="4">4 étoiles</option>
+                  <option value="3">3 étoiles</option><option value="2">2 étoiles</option><option value="1">1 étoile</option>
+                </select>
+                <textarea name="comment" required rows="3" placeholder="Votre avis" class="${champ}"></textarea>
+                <button class="${btn}">Publier mon avis</button>
+              </form>`
+              : '<p class="text-stone-600 mt-3"><a href="#/connexion" class="underline font-semibold">Connectez-vous</a> pour laisser un avis.</p>'}
+          </section>`;
+        $('#add')?.addEventListener('click', e => ajouter(p, Math.max(1, +$('#qty').value), e.currentTarget));
+        $('#form-avis')?.addEventListener('submit', async e => {
+          e.preventDefault();
+          const { rating, comment } = Object.fromEntries(new FormData(e.target));
+          try {
+            await api(`/products/${id}/avis`, { method: 'POST', body: { rating: +rating, comment } });
+            pages.produit(id);
+          } catch (err) { alert(err.message); }
+        });
+      },
+
+      panier() {
+        const c = cart();
+        const total = c.reduce((s, i) => s + i.price * i.qty, 0);
+        $('#app').innerHTML = `
+          <h1 class="text-3xl font-extrabold mb-6">Mon panier</h1>
+          ${c.length ? `
+          <div class="bg-white border border-stone-200 rounded divide-y divide-stone-200">
+            ${c.map(i => `
+              <div class="flex flex-wrap items-center gap-4 p-4">
+                <img src="${esc(i.image)}" alt="" class="w-16 h-16 rounded object-cover">
+                <div class="flex-1 min-w-[10rem]">
+                  <a href="#/produit/${i.id}" class="font-semibold hover:underline">${esc(i.name)}</a>
+                  <p class="text-sm text-stone-500">${eur(i.price)}</p>
+                </div>
+                <input type="number" min="1" max="${i.stock}" value="${i.qty}" data-qty="${i.id}" class="w-20 bg-white border border-stone-300 rounded px-2 py-1">
+                <p class="w-24 text-right font-bold">${eur(i.price * i.qty)}</p>
+                <button data-remove="${i.id}" class="text-red-700 text-sm font-semibold">Supprimer</button>
+              </div>`).join('')}
+            <div class="flex flex-wrap justify-between items-center gap-4 p-5">
+              <p class="text-lg">Total : <strong class="text-2xl">${eur(total)}</strong></p>
+              <a href="#/commande" class="${btn}">Commander</a>
+            </div>
+          </div>`
+          : '<p class="text-stone-500">Votre panier est vide. <a href="#/catalogue" class="underline">Parcourir le catalogue</a></p>'}`;
+        document.querySelectorAll('[data-qty]').forEach(inp => inp.onchange = () => {
+          const items = cart();
+          const it = items.find(i => i.id == inp.dataset.qty);
+          it.qty = Math.min(Math.max(1, +inp.value || 1), it.stock); // quantité entre 1 et le stock
+          saveCart(items);
+          pages.panier();
+        });
+        document.querySelectorAll('[data-remove]').forEach(b => b.onclick = () => {
+          saveCart(cart().filter(i => i.id != b.dataset.remove));
+          pages.panier();
+        });
+      },
+
+      commande() {
+        const c = cart();
+        if (!c.length) return go('#/panier');
+        const total = c.reduce((s, i) => s + i.price * i.qty, 0);
+        $('#app').innerHTML = `
+          <h1 class="text-3xl font-extrabold mb-6">Finaliser ma commande</h1>
+          <form id="form-commande" class="grid md:grid-cols-3 gap-6">
+            <div class="md:col-span-2 space-y-6">
+              <fieldset class="bg-white border border-stone-200 rounded p-6 space-y-3">
+                <legend class="font-bold px-1">Adresse de livraison</legend>
+                <input name="nom" required placeholder="Nom complet" class="${champ}">
+                <input name="adresse" required placeholder="Adresse" class="${champ}">
+                <div class="grid grid-cols-2 gap-3">
+                  <input name="cp" required placeholder="Code postal" class="${champ}">
+                  <input name="ville" required placeholder="Ville" class="${champ}">
+                </div>
+              </fieldset>
+              <fieldset class="bg-white border border-stone-200 rounded p-6 space-y-3">
+                <legend class="font-bold px-1">Paiement (simulé)</legend>
+                <input name="carte" required inputmode="numeric" placeholder="Numéro de carte (16 chiffres)" class="${champ}">
+                <div class="grid grid-cols-2 gap-3">
+                  <input name="exp" required placeholder="MM/AA" class="${champ}">
+                  <input name="cvc" required inputmode="numeric" maxlength="3" placeholder="CVC" class="${champ}">
+                </div>
+                <p class="text-xs text-stone-500">Simulation : aucun débit réel. Exemple : 4242 4242 4242 4242.</p>
+              </fieldset>
+            </div>
+            <aside class="bg-white border border-stone-200 rounded p-6 h-fit space-y-3">
+              <p class="flex justify-between text-stone-600"><span>Articles</span><span>${c.reduce((s, i) => s + i.qty, 0)}</span></p>
+              <p class="flex justify-between text-xl font-extrabold border-t border-stone-200 pt-3"><span>Total</span><span>${eur(total)}</span></p>
+              <button class="${btn} w-full">Payer ${eur(total)}</button>
+            </aside>
+          </form>`;
+        $('#form-commande').onsubmit = async e => {
+          e.preventDefault();
+          // Coordonnées bancaires envoyées séparément de l'adresse
+          const { carte, exp, cvc, ...adresse } = Object.fromEntries(new FormData(e.target));
+          try {
+            const order = await api('/commandes', {
+              method: 'POST',
+              body: { items: c.map(i => ({ id: i.id, qty: i.qty })), adresse, paiement: { carte } }
+            });
+            saveCart([]);
+            $('#app').innerHTML = `
+              <div class="bg-white border border-stone-200 rounded p-10 text-center max-w-lg mx-auto">
+                <h1 class="text-3xl font-extrabold text-green-700">Commande confirmée</h1>
+                <p class="mt-3 text-stone-700">Commande n° ${order.id} — total ${eur(order.total)}</p>
+                <a href="#/catalogue" class="underline font-semibold inline-block mt-6">Continuer mes achats</a>
+              </div>`;
+          } catch (err) { alert(err.message); }
+        };
+      },
+
+      connexion: () => formAuth(false),
+      inscription: () => formAuth(true),
+
+      async admin() {
+        const produits = await api('/products');
+        const liste = Object.fromEntries(produits.map(p => [p.id, p]));
+        const options = Object.entries(CATS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+        $('#app').innerHTML = `
+          <div class="flex items-baseline justify-between mb-6">
+            <h1 class="text-3xl font-extrabold">Administration</h1>
+            <span class="text-stone-500">${produits.length} produits</span>
+          </div>
+          <div class="grid lg:grid-cols-3 gap-6">
+            <form id="form-produit" class="bg-white border border-stone-200 rounded p-6 space-y-3 h-fit">
+              <h2 id="titre-form" class="font-bold text-lg">Ajouter un produit</h2>
+              <input type="hidden" name="pid">
+              <input name="name" required placeholder="Nom du produit" class="${champ}">
+              <select name="category" class="${champ}">${options}</select>
+              <div class="grid grid-cols-2 gap-3">
+                <input name="price" type="number" step="0.01" min="0" required placeholder="Prix (€)" class="${champ}">
+                <input name="stock" type="number" min="0" required placeholder="Stock" class="${champ}">
+              </div>
+              <input name="image" placeholder="URL de l'image" class="${champ}">
+              <textarea name="description" rows="3" placeholder="Description" class="${champ}"></textarea>
+              <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="featured"> Mettre en vedette sur l'accueil</label>
+              <button class="${btn} w-full">Enregistrer</button>
+              <button type="button" id="annuler" class="hidden w-full text-sm text-stone-600 underline">Annuler la modification</button>
+            </form>
+            <div class="lg:col-span-2 bg-white border border-stone-200 rounded overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-stone-100 text-left">
+                  <tr><th class="p-3">Produit</th><th class="p-3">Prix</th><th class="p-3">Stock</th><th class="p-3"></th></tr>
+                </thead>
+                <tbody>
+                  ${produits.map(p => `
+                    <tr class="border-t border-stone-200">
+                      <td class="p-3 font-semibold">${esc(p.name)}</td>
+                      <td class="p-3">${eur(p.price)}</td>
+                      <td class="p-3">${p.stock}</td>
+                      <td class="p-3 text-right whitespace-nowrap">
+                        <button data-edit="${p.id}" class="underline font-semibold">Modifier</button>
+                        <button data-del="${p.id}" class="text-red-700 underline font-semibold ml-3">Supprimer</button>
+                      </td>
+                    </tr>`).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>`;
+
+        const f = $('#form-produit');
+        f.onsubmit = async e => {
+          e.preventDefault();
+          const data = Object.fromEntries(new FormData(f));
+          const pid = data.pid;
+          delete data.pid;
+          try {
+            await api(pid ? `/admin/products/${pid}` : '/admin/products', { method: pid ? 'PUT' : 'POST', body: data });
+            pages.admin();
+          } catch (err) { alert(err.message); }
+        };
+        document.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => {
+          const p = liste[b.dataset.edit];
+          Object.entries({ ...p, pid: p.id }).forEach(([k, v]) => {
+            const el = f.querySelector(`[name=${k}]`);
+            if (el?.type === 'checkbox') el.checked = !!v;
+            else if (el) el.value = v ?? '';
+          });
+          $('#titre-form').textContent = 'Modifier le produit';
+          $('#annuler').classList.remove('hidden');
+        });
+        $('#annuler').onclick = () => pages.admin();
+        document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+          if (!confirm('Supprimer définitivement ce produit ?')) return;
+          try {
+            await api('/admin/products/' + b.dataset.del, { method: 'DELETE' });
+            pages.admin();
+          } catch (err) { alert(err.message); }
+        });
+      }
+    };
+
+    // ---------- Routeur (hash) ----------
+    async function route() {
+      const [, page = 'accueil', arg] = location.hash.slice(1).split('/');
+      // Gardes d'accès : administration réservée, commande réservée aux comptes connectés
+      if ((page === 'admin' && user?.role !== 'admin') || (page === 'commande' && !user)) return go('#/connexion');
+      const fn = pages[page] || pages.accueil;
+      try { await fn(arg); }
+      catch (e) { $('#app').innerHTML = `<p class="text-red-700 font-semibold">${esc(e.message)}</p>`; }
+      window.scrollTo(0, 0);
+    }
+
+    window.addEventListener('hashchange', route);
+    updateHeader();
+    route();
+  </script>
+</body>
+</html>
